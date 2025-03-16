@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import Layout from '@/components/Layout';
 import { 
@@ -39,6 +38,13 @@ interface RawMaterial {
   min_stock: number;
 }
 
+interface StockPurchase {
+  id: string;
+  stock_name: string;
+  quantity: number;
+  date: string;
+}
+
 interface ProductionStatus {
   id: string;
   month: string;
@@ -62,6 +68,7 @@ const ProductionStatusPage = () => {
   const [productionStatus, setProductionStatus] = useState<ProductionStatus[]>([]);
   const [processes, setProcesses] = useState<Process[]>([]);
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
+  const [stockPurchases, setStockPurchases] = useState<StockPurchase[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [statusDate, setStatusDate] = useState(new Date().toISOString().split('T')[0]);
@@ -77,13 +84,14 @@ const ProductionStatusPage = () => {
   useEffect(() => {
     fetchProcesses();
     fetchRawMaterials();
+    fetchStockPurchases();
   }, []);
 
   useEffect(() => {
-    if (processes.length > 0 && rawMaterials.length > 0) {
+    if (processes.length > 0 && rawMaterials.length > 0 && stockPurchases.length > 0) {
       fetchProductionStatus();
     }
-  }, [processes, rawMaterials, statusDate, selectedProcess]);
+  }, [processes, rawMaterials, stockPurchases, statusDate, selectedProcess]);
 
   const fetchProcesses = async () => {
     try {
@@ -115,6 +123,24 @@ const ProductionStatusPage = () => {
     } catch (error: any) {
       toast({
         title: "Error fetching raw materials",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const fetchStockPurchases = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('stock_purchases')
+        .select('*')
+        .order('date', { ascending: true });
+
+      if (error) throw error;
+      setStockPurchases(data || []);
+    } catch (error: any) {
+      toast({
+        title: "Error fetching stock purchases",
         description: error.message,
         variant: "destructive",
       });
@@ -167,150 +193,43 @@ const ProductionStatusPage = () => {
             .eq('raw_material_id', material.id)
             .eq('process', process.name)
             .maybeSingle();
-            
+          
           if (prevError) {
-            console.error("Error fetching previous month data:", prevError);
+            console.error("Error fetching previous production status:", prevError);
           }
 
-          // Get opening balance - the closing balance of the previous month or 0
-          const openingBalance = (prevData?.closing_balance) || 0;
+          const opening_balance = prevData ? prevData.closing_balance : 0;
 
-          // Calculate date range for current month
-          const startDate = new Date(year, new Date(`${month} 1, ${year}`).getMonth(), 1);
-          const endDate = new Date(year, new Date(`${month} 1, ${year}`).getMonth() + 1, 0);
-          
-          // Get assigned tasks for this material and process
-          const { data: assignedTasks, error: assignedError } = await supabase
-            .from('tasks')
-            .select('assigned_qty')
-            .eq('raw_material_id', material.id)
-            .eq('process', process.name)
-            .gte('date_assigned', startDate.toISOString().split('T')[0])
-            .lte('date_assigned', endDate.toISOString().split('T')[0]);
+          // Calculate the total purchases for this material in the current month
+          const totalPurchases = stockPurchases
+            .filter(purchase => 
+              purchase.stock_name === material.name && 
+              new Date(purchase.date).getMonth() === new Date(statusDate).getMonth() && 
+              new Date(purchase.date).getFullYear() === new Date(statusDate).getFullYear()
+            )
+            .reduce((sum, purchase) => sum + purchase.quantity, 0);
 
-          if (assignedError) throw assignedError;
-          
-          const assignedQty = assignedTasks?.reduce((sum, task) => sum + Number(task.assigned_qty), 0) || 0;
+          // Calculate the closing balance
+          const closing_balance = opening_balance + totalPurchases - (existingData?.assigned || 0) - (existingData?.completed || 0) - (existingData?.wastage || 0);
 
-          // Get completed tasks for this material and process
-          const { data: completedTasks, error: completedError } = await supabase
-            .from('tasks')
-            .select('assigned_qty')
-            .eq('raw_material_id', material.id)
-            .eq('process', process.name)
-            .not('date_completed', 'is', null)
-            .gte('date_assigned', startDate.toISOString().split('T')[0])
-            .lte('date_assigned', endDate.toISOString().split('T')[0]);
-
-          if (completedError) throw completedError;
-          
-          const completedQty = completedTasks?.reduce((sum, task) => sum + Number(task.assigned_qty), 0) || 0;
-
-          // Get wastage for this material and process
-          const { data: wastageData, error: wastageError } = await supabase
-            .from('tasks')
-            .select('wastage_qty')
-            .eq('raw_material_id', material.id)
-            .eq('process', process.name)
-            .not('wastage_qty', 'is', null)
-            .gte('date_assigned', startDate.toISOString().split('T')[0])
-            .lte('date_assigned', endDate.toISOString().split('T')[0]);
-
-          if (wastageError) throw wastageError;
-          
-          const wastageQty = wastageData?.reduce((sum, task) => sum + Number(task.wastage_qty || 0), 0) || 0;
-
-          // Calculate pending quantity (assigned - completed)
-          const pendingQty = assignedQty - completedQty;
-
-          // Use adjustment from existing record or default to 0
-          const adjustment = existingData?.adjustment || 0;
-
-          // Calculate closing balance = opening + completed - wastage + adjustment
-          const closingBalance = openingBalance + completedQty - wastageQty + adjustment;
-
-          // Create or update the production status record
-          if (existingData) {
-            // Update existing record
-            await supabase
-              .from('production_status')
-              .update({
-                opening_balance: openingBalance,
-                assigned: assignedQty,
-                completed: completedQty,
-                wastage: wastageQty,
-                pending: pendingQty,
-                closing_balance: closingBalance,
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', existingData.id);
-
-            // Add to our in-memory records
-            productionStatusItems.push({
-              id: existingData.id,
-              month,
-              year,
-              process: process.name,
-              raw_material_id: material.id,
-              raw_material_name: material.name,
-              raw_material_category: material.category,
-              raw_material_unit: material.unit,
-              opening_balance: openingBalance,
-              assigned: assignedQty,
-              completed: completedQty,
-              wastage: wastageQty,
-              pending: pendingQty,
-              adjustment,
-              closing_balance: closingBalance,
-              min_level: material.min_stock
-            });
-
-            newAdjustments[existingData.id] = adjustment;
-          } else {
-            // Insert new record
-            const { data: insertedData, error: insertError } = await supabase
-              .from('production_status')
-              .insert({
-                month,
-                year,
-                process: process.name,
-                raw_material_id: material.id,
-                opening_balance: openingBalance,
-                assigned: assignedQty,
-                completed: completedQty,
-                wastage: wastageQty,
-                pending: pendingQty,
-                adjustment: 0,
-                closing_balance: closingBalance
-              })
-              .select();
-
-            if (insertError) throw insertError;
-
-            if (insertedData && insertedData[0]) {
-              // Add to our in-memory records
-              productionStatusItems.push({
-                id: insertedData[0].id,
-                month,
-                year,
-                process: process.name,
-                raw_material_id: material.id,
-                raw_material_name: material.name,
-                raw_material_category: material.category,
-                raw_material_unit: material.unit,
-                opening_balance: openingBalance,
-                assigned: assignedQty,
-                completed: completedQty,
-                wastage: wastageQty,
-                pending: pendingQty,
-                adjustment: 0,
-                closing_balance: closingBalance,
-                min_level: material.min_stock
-              });
-
-              newAdjustments[insertedData[0].id] = 0;
-            }
-          }
+          productionStatusItems.push({
+            id: comboId,
+            month,
+            year,
+            process: process.name,
+            raw_material_id: material.id,
+            raw_material_name: material.name,
+            raw_material_category: material.category,
+            raw_material_unit: material.unit,
+            opening_balance,
+            assigned: existingData?.assigned || 0,
+            completed: existingData?.completed || 0,
+            wastage: existingData?.wastage || 0,
+            pending: existingData?.pending || 0,
+            adjustment: existingData?.adjustment || 0,
+            closing_balance,
+            min_level: material.min_stock,
+          });
         }
       }
 
@@ -341,17 +260,15 @@ const ProductionStatusPage = () => {
     try {
       setLoading(true);
 
-      // Update each production status with new adjustment
       for (const status of productionStatus) {
         const newAdjustment = adjustments[status.id] || 0;
-        const newClosingBalance = status.opening_balance + status.completed - status.wastage + newAdjustment;
+        const newClosingBalance = status.closing_balance + newAdjustment;
 
-        // Update in database
         const { error } = await supabase
           .from('production_status')
           .update({
             adjustment: newAdjustment,
-            closing_balance: newClosingBalance
+            closing_balance: newClosingBalance,
           })
           .eq('id', status.id);
 
@@ -377,7 +294,7 @@ const ProductionStatusPage = () => {
   };
 
   // Filter production status based on search query
-  const filteredProductionStatus = productionStatus.filter(status => 
+  const filteredProductionStatus = productionStatus.filter(status =>
     status.raw_material_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     status.raw_material_category.toLowerCase().includes(searchQuery.toLowerCase()) ||
     status.process.toLowerCase().includes(searchQuery.toLowerCase())
@@ -405,7 +322,7 @@ const ProductionStatusPage = () => {
             <div>
               <Label htmlFor="processFilter" className="block mb-1">Process</Label>
               <Select value={selectedProcess} onValueChange={setSelectedProcess}>
-                <SelectTrigger id="processFilter" className="w-[180px]">
+                <SelectTrigger id="processFilter" className="w-40">
                   <SelectValue placeholder="Select Process" />
                 </SelectTrigger>
                 <SelectContent>
@@ -418,33 +335,17 @@ const ProductionStatusPage = () => {
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <span className="block text-sm font-medium text-gray-700 mb-1">Month / Year</span>
-              <div className="h-10 px-3 py-2 border border-gray-200 rounded bg-gray-50">
-                {month}-{year}
-              </div>
+            <div className="flex-1">
+              <Label htmlFor="search" className="block mb-1">Search</Label>
+              <Input
+                id="search"
+                type="search"
+                placeholder="Search production status..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full"
+              />
             </div>
-            <Button 
-              onClick={handleUpdateStatus} 
-              disabled={loading}
-              className="ml-auto"
-            >
-              <RefreshCw className="mr-2 h-4 w-4" />
-              Update Status
-            </Button>
-          </div>
-        </div>
-
-        <div className="flex items-center w-full max-w-md mb-4">
-          <div className="relative w-full">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
-            <Input
-              type="search"
-              placeholder="Search production status..."
-              className="pl-8"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
           </div>
         </div>
 
@@ -461,56 +362,61 @@ const ProductionStatusPage = () => {
                   <TableHead>Completed</TableHead>
                   <TableHead>Wastage</TableHead>
                   <TableHead>Pending</TableHead>
-                  <TableHead>Adj +/-</TableHead>
-                  <TableHead>Closing Bal</TableHead>
+                  <TableHead>Adjustment</TableHead>
+                  <TableHead>Closing Balance</TableHead>
+                  <TableHead>Min Level</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center py-10">Loading...</TableCell>
+                    <TableCell colSpan={11} className="text-center py-4">Loading...</TableCell>
                   </TableRow>
                 ) : filteredProductionStatus.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center py-10">
-                      {searchQuery ? 'No production status found matching your search.' : 'No production status data available.'}
-                    </TableCell>
+                    <TableCell colSpan={11} className="text-center py-4">No production status found</TableCell>
                   </TableRow>
                 ) : (
-                  filteredProductionStatus.map(status => {
-                    // Calculate real-time closing balance based on current adjustment
-                    const currentAdjustment = adjustments[status.id] || 0;
-                    const calculatedClosingBalance = status.opening_balance + status.completed - status.wastage + currentAdjustment;
-                    
-                    return (
-                      <TableRow key={status.id}>
-                        <TableCell className="font-medium">{status.process}</TableCell>
-                        <TableCell>{status.raw_material_name}</TableCell>
-                        <TableCell>{status.raw_material_category}</TableCell>
-                        <TableCell>{status.opening_balance} {status.raw_material_unit}</TableCell>
-                        <TableCell>{status.assigned} {status.raw_material_unit}</TableCell>
-                        <TableCell>{status.completed} {status.raw_material_unit}</TableCell>
-                        <TableCell>{status.wastage} {status.raw_material_unit}</TableCell>
-                        <TableCell>{status.pending} {status.raw_material_unit}</TableCell>
-                        <TableCell>
-                          <Input
-                            type="number"
-                            value={adjustments[status.id] || 0}
-                            onChange={(e) => handleAdjustmentChange(status.id, e.target.value)}
-                            className="w-16 text-center"
-                            min="-9999"
-                            step="0.01"
-                          />
-                        </TableCell>
-                        <TableCell>{calculatedClosingBalance.toFixed(2)} {status.raw_material_unit}</TableCell>
-                      </TableRow>
-                    );
-                  })
+                  filteredProductionStatus.map(status => (
+                    <TableRow key={status.id}>
+                      <TableCell>{status.process}</TableCell>
+                      <TableCell>{status.raw_material_name}</TableCell>
+                      <TableCell>{status.raw_material_category}</TableCell>
+                      <TableCell>{status.opening_balance.toFixed(2)} {status.raw_material_unit}</TableCell>
+                      <TableCell>{status.assigned.toFixed(2)} {status.raw_material_unit}</TableCell>
+                      <TableCell>{status.completed.toFixed(2)} {status.raw_material_unit}</TableCell>
+                      <TableCell>{status.wastage.toFixed(2)} {status.raw_material_unit}</TableCell>
+                      <TableCell>{status.pending.toFixed(2)} {status.raw_material_unit}</TableCell>
+                      <TableCell>
+                        <Input
+                          type="number"
+                          value={adjustments[status.id] || ''}
+                          onChange={(e) => handleAdjustmentChange(status.id, e.target.value)}
+                          className="w-24"
+                          min="-9999"
+                          step="0.01"
+                        />
+                      </TableCell>
+                      <TableCell>{status.closing_balance.toFixed(2)} {status.raw_material_unit}</TableCell>
+                      <TableCell>{status.min_level.toFixed(2)} {status.raw_material_unit}</TableCell>
+                    </TableRow>
+                  ))
                 )}
               </TableBody>
             </Table>
           </CardContent>
         </Card>
+
+        <div className="flex justify-end mt-4">
+          <Button
+            onClick={handleUpdateStatus}
+            disabled={loading}
+            className="ml-auto"
+          >
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Update Status
+          </Button>
+        </div>
       </div>
     </Layout>
   );
