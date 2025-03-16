@@ -193,7 +193,7 @@ const ProductionStatusPage = () => {
             .eq('raw_material_id', material.id)
             .eq('process', process.name)
             .maybeSingle();
-          
+
           if (prevError) {
             console.error("Error fetching previous production status:", prevError);
           }
