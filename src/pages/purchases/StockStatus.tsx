@@ -34,7 +34,7 @@ interface RawMaterial {
 
 interface StockPurchase {
   id: string;
-  stock_name: string;
+  raw_material_id: string;
   quantity: number;
   date: string;
 }
@@ -164,7 +164,7 @@ const StockStatusPage = () => {
         // Calculate the total purchases for this material in the current month
         const totalPurchases = stockPurchases
           .filter(purchase => 
-            purchase.stock_name === material.name && 
+            purchase.raw_material_id === material.id && 
             new Date(purchase.date).getMonth() === new Date(statusDate).getMonth() && 
             new Date(purchase.date).getFullYear() === new Date(statusDate).getFullYear()
           )
