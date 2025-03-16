@@ -147,6 +147,29 @@ const ProductionStatusPage = () => {
     }
   };
 
+  const fetchUtilisedQuantity = async (materialId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('assigned_qty')
+        .eq('raw_material_id', materialId)
+        .eq('process', 'Cleaning')
+        .gte('date_assigned', new Date(year, new Date(`${month} 1, ${year}`).getMonth(), 1).toISOString())
+        .lte('date_assigned', new Date(year, new Date(`${month} 1, ${year}`).getMonth() + 1, 0).toISOString());
+
+      if (error) throw error;
+
+      return data.reduce((sum, task) => sum + Number(task.assigned_qty), 0) || 0;
+    } catch (error: any) {
+      toast({
+        title: "Error fetching utilised quantity",
+        description: error.message,
+        variant: "destructive",
+      });
+      return 0;
+    }
+  };
+
   const fetchProductionStatus = async () => {
     try {
       setLoading(true);
@@ -193,7 +216,7 @@ const ProductionStatusPage = () => {
             .eq('raw_material_id', material.id)
             .eq('process', process.name)
             .maybeSingle();
-
+          
           if (prevError) {
             console.error("Error fetching previous production status:", prevError);
           }
@@ -209,8 +232,11 @@ const ProductionStatusPage = () => {
             )
             .reduce((sum, purchase) => sum + purchase.quantity, 0);
 
+          // Calculate the utilised quantity for this material in the current month
+          const utilisedQuantity = await fetchUtilisedQuantity(material.id);
+
           // Calculate the closing balance
-          const closing_balance = opening_balance + totalPurchases - (existingData?.assigned || 0) - (existingData?.completed || 0) - (existingData?.wastage || 0);
+          const closing_balance = opening_balance + totalPurchases - utilisedQuantity + (existingData?.adjustment || 0);
 
           productionStatusItems.push({
             id: comboId,
