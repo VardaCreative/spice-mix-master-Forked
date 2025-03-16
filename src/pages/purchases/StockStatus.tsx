@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import Layout from '@/components/Layout';
 import { 
@@ -12,18 +11,32 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { 
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
+} from '@/components/ui/select';
+import { Card, CardContent } from '@/components/ui/card';
 import { RefreshCw, Search } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 
-// Types
 interface RawMaterial {
   id: string;
   name: string;
   category: string;
-  min_stock: number;
   unit: string;
   current_stock: number;
+  min_stock: number;
+}
+
+interface StockPurchase {
+  id: string;
+  stock_name: string;
+  quantity: number;
+  date: string;
 }
 
 interface StockStatus {
@@ -31,21 +44,21 @@ interface StockStatus {
   month: string;
   year: number;
   raw_material_id: string;
-  raw_material_name?: string;
-  raw_material_category?: string;
-  raw_material_unit?: string;
+  raw_material_name: string;
+  raw_material_category: string;
+  raw_material_unit: string;
   opening_balance: number;
   purchases: number;
   utilized: number;
   adjustment: number;
   closing_balance: number;
   min_level: number;
-  status: 'normal' | 'low' | 'out';
 }
 
 const StockStatusPage = () => {
   const [stockStatus, setStockStatus] = useState<StockStatus[]>([]);
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
+  const [stockPurchases, setStockPurchases] = useState<StockPurchase[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [statusDate, setStatusDate] = useState(new Date().toISOString().split('T')[0]);
@@ -59,15 +72,15 @@ const StockStatusPage = () => {
   // Fetch data on component mount
   useEffect(() => {
     fetchRawMaterials();
+    fetchStockPurchases();
   }, []);
 
   useEffect(() => {
-    if (rawMaterials.length > 0) {
+    if (rawMaterials.length > 0 && stockPurchases.length > 0) {
       fetchStockStatus();
     }
-  }, [rawMaterials, statusDate]);
+  }, [rawMaterials, stockPurchases, statusDate]);
 
-  // Fetch all raw materials
   const fetchRawMaterials = async () => {
     try {
       const { data, error } = await supabase
@@ -75,10 +88,7 @@ const StockStatusPage = () => {
         .select('*')
         .order('name');
 
-      if (error) {
-        throw error;
-      }
-
+      if (error) throw error;
       setRawMaterials(data || []);
     } catch (error: any) {
       toast({
@@ -89,53 +99,102 @@ const StockStatusPage = () => {
     }
   };
 
-  // Fetch stock status based on date
+  const fetchStockPurchases = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('stock_purchases')
+        .select('*')
+        .order('date', { ascending: true });
+
+      if (error) throw error;
+      setStockPurchases(data || []);
+    } catch (error: any) {
+      toast({
+        title: "Error fetching stock purchases",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
   const fetchStockStatus = async () => {
     try {
       setLoading(true);
-      const currentMonth = month;
-      const currentYear = year;
+      
+      // Create or update stock status for each raw material
+      const stockStatusItems: StockStatus[] = [];
+      const newAdjustments: Record<string, number> = {};
 
-      // Check if we have stock status records for this month/year
-      const { data: existingData, error: existingError } = await supabase
-        .from('stock_status')
-        .select(`
-          *,
-          raw_materials(name, category, unit, min_stock)
-        `)
-        .eq('month', currentMonth)
-        .eq('year', currentYear);
-
-      if (existingError) {
-        throw existingError;
-      }
-
-      if (existingData && existingData.length > 0) {
-        // We have records, process them
-        const transformedData = existingData.map((status: any) => {
-          const rawMaterial = status.raw_materials;
-          return {
-            ...status,
-            raw_material_name: rawMaterial?.name || 'Unknown',
-            raw_material_category: rawMaterial?.category || 'Unknown',
-            raw_material_unit: rawMaterial?.unit || 'unit',
-            min_level: rawMaterial?.min_stock || 0,
-            status: determineStatus(status.closing_balance, rawMaterial?.min_stock || 0),
-          };
-        });
-
-        setStockStatus(transformedData);
+      for (const material of rawMaterials) {
+        // Generate a unique ID for this combination
+        const comboId = `${material.id}_${month}_${year}`;
         
-        // Initialize adjustments
-        const newAdjustments: Record<string, number> = {};
-        transformedData.forEach((status) => {
-          newAdjustments[status.id] = status.adjustment;
+        // Check if we already have data for this combination
+        const { data: existingData, error: existingError } = await supabase
+          .from('stock_status')
+          .select('*')
+          .eq('month', month)
+          .eq('year', year)
+          .eq('raw_material_id', material.id)
+          .maybeSingle();
+
+        if (existingError) {
+          console.error("Error fetching existing stock status:", existingError);
+        }
+
+        // Get previous month's closing balance
+        const prevMonth = new Date(year, new Date(`${month} 1, ${year}`).getMonth() - 1, 1);
+        const prevMonthString = prevMonth.toLocaleString('default', { month: 'short' });
+        const prevYear = prevMonth.getFullYear();
+        
+        const { data: prevData, error: prevError } = await supabase
+          .from('stock_status')
+          .select('closing_balance')
+          .eq('month', prevMonthString)
+          .eq('year', prevYear)
+          .eq('raw_material_id', material.id)
+          .maybeSingle();
+        
+        if (prevError) {
+          console.error("Error fetching previous stock status:", prevError);
+        }
+
+        const opening_balance = prevData ? prevData.closing_balance : 0;
+
+        // Calculate the total purchases for this material in the current month
+        const totalPurchases = stockPurchases
+          .filter(purchase => 
+            purchase.stock_name === material.name && 
+            new Date(purchase.date).getMonth() === new Date(statusDate).getMonth() && 
+            new Date(purchase.date).getFullYear() === new Date(statusDate).getFullYear()
+          )
+          .reduce((sum, purchase) => sum + purchase.quantity, 0);
+
+        // Calculate the utilized quantity for this material in the current month (using appropriate logic)
+        const utilizedQuantity = 0; // Placeholder for utilized quantity logic
+
+        // Calculate the closing balance
+        const closing_balance = opening_balance + totalPurchases - utilizedQuantity + (existingData?.adjustment || 0);
+
+        stockStatusItems.push({
+          id: comboId,
+          month,
+          year,
+          raw_material_id: material.id,
+          raw_material_name: material.name,
+          raw_material_category: material.category,
+          raw_material_unit: material.unit,
+          opening_balance,
+          purchases: totalPurchases,
+          utilized: utilizedQuantity,
+          adjustment: existingData?.adjustment || 0,
+          closing_balance,
+          min_level: material.min_stock,
         });
-        setAdjustments(newAdjustments);
-      } else {
-        // No records for this month/year, we need to create them
-        await generateStockStatus(currentMonth, currentYear);
       }
+
+      setStockStatus(stockStatusItems);
+      setAdjustments(newAdjustments);
     } catch (error: any) {
       toast({
         title: "Error fetching stock status",
@@ -145,140 +204,6 @@ const StockStatusPage = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  // Generate stock status for a month
-  const generateStockStatus = async (month: string, year: number) => {
-    try {
-      // For each raw material, we need to:
-      // 1. Get previous month's closing balance (or current_stock if no previous record)
-      // 2. Calculate purchases from stock_purchases in current month
-      // 3. Calculate utilized from tasks in current month (only Cleaning process)
-      // 4. Calculate closing balance = opening + purchases - utilized + adjustment
-      const newStockStatus: StockStatus[] = [];
-      const newAdjustments: Record<string, number> = {};
-
-      for (const material of rawMaterials) {
-        // Find previous month's record (for Opening Balance)
-        // Get the previous month and year
-        const currentDate = new Date(year, new Date(`${month} 1, ${year}`).getMonth(), 1);
-        const prevDate = new Date(currentDate);
-        prevDate.setMonth(prevDate.getMonth() - 1);
-        const prevMonthString = prevDate.toLocaleString('default', { month: 'short' });
-        const prevYear = prevDate.getFullYear();
-        
-        // Query previous month's closing balance
-        const { data: prevData } = await supabase
-          .from('stock_status')
-          .select('closing_balance')
-          .eq('month', prevMonthString)
-          .eq('year', prevYear)
-          .eq('raw_material_id', material.id)
-          .maybeSingle();
-
-        // Get opening balance - the closing balance of the previous month
-        const openingBalance = prevData ? prevData.closing_balance : material.current_stock;
-
-        // Calculate purchases for current month - sum of all purchases for this material in the month
-        const startDate = new Date(year, new Date(`${month} 1, ${year}`).getMonth(), 1);
-        const endDate = new Date(year, new Date(`${month} 1, ${year}`).getMonth() + 1, 0);
-        
-        const { data: purchasesData, error: purchasesError } = await supabase
-          .from('stock_purchases')
-          .select('quantity')
-          .eq('raw_material_id', material.id)
-          .gte('date', startDate.toISOString().split('T')[0])
-          .lte('date', endDate.toISOString().split('T')[0]);
-
-        if (purchasesError) throw purchasesError;
-        
-        const purchases = purchasesData?.reduce((sum, item) => sum + Number(item.quantity), 0) || 0;
-
-        // Calculate utilized for current month - sum of all cleaning process assignments for this material
-        const { data: tasksData, error: tasksError } = await supabase
-          .from('tasks')
-          .select('assigned_qty')
-          .eq('raw_material_id', material.id)
-          .eq('process', 'Cleaning')  // Only count 'Cleaning' process as per requirements
-          .gte('date_assigned', startDate.toISOString().split('T')[0])
-          .lte('date_assigned', endDate.toISOString().split('T')[0]);
-
-        if (tasksError) throw tasksError;
-        
-        const utilized = tasksData?.reduce((sum, item) => sum + Number(item.assigned_qty), 0) || 0;
-
-        // Use adjustment of 0 initially
-        const adjustment = 0;
-
-        // Calculate closing balance = opening + purchases - utilized + adjustment
-        const closingBalance = openingBalance + purchases - utilized + adjustment;
-
-        // Determine status
-        const status = determineStatus(closingBalance, material.min_stock);
-
-        // Create new stock status record
-        const newStatus: StockStatus = {
-          id: `temp_${material.id}`,
-          month,
-          year,
-          raw_material_id: material.id,
-          raw_material_name: material.name,
-          raw_material_category: material.category,
-          raw_material_unit: material.unit,
-          opening_balance: openingBalance,
-          purchases,
-          utilized,
-          adjustment,
-          closing_balance: closingBalance,
-          min_level: material.min_stock,
-          status,
-        };
-
-        newStockStatus.push(newStatus);
-        newAdjustments[`temp_${material.id}`] = 0;
-
-        // Insert into database
-        const { data: insertedData, error: insertError } = await supabase
-          .from('stock_status')
-          .insert({
-            month,
-            year,
-            raw_material_id: material.id,
-            opening_balance: openingBalance,
-            purchases,
-            utilized,
-            adjustment,
-            closing_balance: closingBalance,
-            status,
-          })
-          .select();
-
-        if (insertError) throw insertError;
-
-        if (insertedData && insertedData[0]) {
-          // Update id in memory
-          newStatus.id = insertedData[0].id;
-          newAdjustments[insertedData[0].id] = 0;
-          delete newAdjustments[`temp_${material.id}`];
-        }
-      }
-
-      setStockStatus(newStockStatus);
-      setAdjustments(newAdjustments);
-    } catch (error: any) {
-      toast({
-        title: "Error generating stock status",
-        description: error.message,
-        variant: "destructive",
-      });
-    }
-  };
-
-  // Determine status based on closing balance and min stock
-  const determineStatus = (closing: number, min: number): 'normal' | 'low' | 'out' => {
-    if (closing <= 0) return 'out';
-    if (closing < min) return 'low';
-    return 'normal';
   };
 
   // Handle adjustment change
@@ -295,33 +220,19 @@ const StockStatusPage = () => {
     try {
       setLoading(true);
 
-      // Update each stock status with new adjustment
       for (const status of stockStatus) {
         const newAdjustment = adjustments[status.id] || 0;
-        const newClosingBalance = status.opening_balance + status.purchases - status.utilized + newAdjustment;
-        const newStatus = determineStatus(newClosingBalance, status.min_level);
+        const newClosingBalance = status.closing_balance + newAdjustment;
 
-        // Update in database
         const { error } = await supabase
           .from('stock_status')
           .update({
             adjustment: newAdjustment,
             closing_balance: newClosingBalance,
-            status: newStatus
           })
           .eq('id', status.id);
 
         if (error) throw error;
-
-        // Also update raw material current stock
-        const { error: materialError } = await supabase
-          .from('raw_materials')
-          .update({
-            current_stock: newClosingBalance
-          })
-          .eq('id', status.raw_material_id);
-
-        if (materialError) throw materialError;
       }
 
       toast({
@@ -342,15 +253,10 @@ const StockStatusPage = () => {
     }
   };
 
-  // Get status counts
-  const normalCount = stockStatus.filter(s => s.status === 'normal').length;
-  const lowCount = stockStatus.filter(s => s.status === 'low').length;
-  const outCount = stockStatus.filter(s => s.status === 'out').length;
-
   // Filter stock status based on search query
-  const filteredStockStatus = stockStatus.filter(status => 
-    status.raw_material_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    status.raw_material_category?.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredStockStatus = stockStatus.filter(status =>
+    status.raw_material_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    status.raw_material_category.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
@@ -372,125 +278,81 @@ const StockStatusPage = () => {
                 className="w-40"
               />
             </div>
-            <div>
-              <span className="block text-sm font-medium text-gray-700 mb-1">Month / Year</span>
-              <div className="h-10 px-3 py-2 border border-gray-200 rounded bg-gray-50">
-                {month}-{year}
-              </div>
+            <div className="flex-1">
+              <Label htmlFor="search" className="block mb-1">Search</Label>
+              <Input
+                id="search"
+                type="search"
+                placeholder="Search stock status..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full"
+              />
             </div>
-            <Button 
-              onClick={handleUpdateStatus} 
-              disabled={loading}
-              className="ml-auto"
-            >
-              <RefreshCw className="mr-2 h-4 w-4" />
-              Update Status
-            </Button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          <div className="bg-white p-4 rounded-lg shadow-sm">
-            <div className="text-xl font-bold text-green-600">{normalCount}</div>
-            <div className="text-gray-600">Normal Stock Items</div>
-          </div>
-          <div className="bg-white p-4 rounded-lg shadow-sm">
-            <div className="text-xl font-bold text-amber-600">{lowCount}</div>
-            <div className="text-gray-600">Low Stock Items</div>
-          </div>
-          <div className="bg-white p-4 rounded-lg shadow-sm">
-            <div className="text-xl font-bold text-red-600">{outCount}</div>
-            <div className="text-gray-600">Out of Stock Items</div>
-          </div>
-        </div>
-
-        <div className="flex items-center w-full max-w-md mb-4">
-          <div className="relative w-full">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
-            <Input
-              type="search"
-              placeholder="Search stock status..."
-              className="pl-8"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Stock Name</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Opening Balance</TableHead>
-                <TableHead>Purchases</TableHead>
-                <TableHead>Utilised</TableHead>
-                <TableHead>Adj +/-</TableHead>
-                <TableHead>Closing Bal</TableHead>
-                <TableHead>Min. Level</TableHead>
-                <TableHead>Status</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
+        <Card>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-10">Loading...</TableCell>
+                  <TableHead>RM/Stock Name</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead>Opening Balance</TableHead>
+                  <TableHead>Purchases</TableHead>
+                  <TableHead>Utilized</TableHead>
+                  <TableHead>Adjustment</TableHead>
+                  <TableHead>Closing Balance</TableHead>
+                  <TableHead>Min Level</TableHead>
                 </TableRow>
-              ) : stockStatus.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={9} className="text-center py-10">
-                    {searchQuery ? 'No stock items found matching your search.' : 'No stock status data available.'}
-                  </TableCell>
-                </TableRow>
-              ) : (
-                stockStatus
-                  .filter(status => 
-                    status.raw_material_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                    status.raw_material_category?.toLowerCase().includes(searchQuery.toLowerCase())
-                  )
-                  .map(status => {
-                    // Calculate real-time closing balance based on current adjustment
-                    const currentAdjustment = adjustments[status.id] || 0;
-                    const calculatedClosingBalance = status.opening_balance + status.purchases - status.utilized + currentAdjustment;
-                    const calculatedStatus = determineStatus(calculatedClosingBalance, status.min_level);
-                    
-                    return (
-                      <TableRow key={status.id}>
-                        <TableCell className="font-medium">{status.raw_material_name}</TableCell>
-                        <TableCell>{status.raw_material_category}</TableCell>
-                        <TableCell>{status.opening_balance} {status.raw_material_unit}</TableCell>
-                        <TableCell>{status.purchases} {status.raw_material_unit}</TableCell>
-                        <TableCell>{status.utilized} {status.raw_material_unit}</TableCell>
-                        <TableCell>
-                          <Input
-                            type="number"
-                            value={adjustments[status.id] || 0}
-                            onChange={(e) => handleAdjustmentChange(status.id, e.target.value)}
-                            className="w-16 text-center"
-                            min="-9999"
-                            step="0.01"
-                          />
-                        </TableCell>
-                        <TableCell>{calculatedClosingBalance.toFixed(2)} {status.raw_material_unit}</TableCell>
-                        <TableCell>{status.min_level} {status.raw_material_unit}</TableCell>
-                        <TableCell>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                            calculatedStatus === 'normal' ? 'bg-green-100 text-green-800' :
-                            calculatedStatus === 'low' ? 'bg-amber-100 text-amber-800' :
-                            'bg-red-100 text-red-800'
-                          }`}>
-                            {calculatedStatus === 'normal' ? 'Normal' : 
-                            calculatedStatus === 'low' ? 'Low Stock' : 
-                            'Out of Stock'}
-                          </span>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-              )}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {loading ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center py-4">Loading...</TableCell>
+                  </TableRow>
+                ) : filteredStockStatus.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center py-4">No stock status found</TableCell>
+                  </TableRow>
+                ) : (
+                  filteredStockStatus.map(status => (
+                    <TableRow key={status.id}>
+                      <TableCell>{status.raw_material_name}</TableCell>
+                      <TableCell>{status.raw_material_category}</TableCell>
+                      <TableCell>{status.opening_balance.toFixed(2)} {status.raw_material_unit}</TableCell>
+                      <TableCell>{status.purchases.toFixed(2)} {status.raw_material_unit}</TableCell>
+                      <TableCell>{status.utilized.toFixed(2)} {status.raw_material_unit}</TableCell>
+                      <TableCell>
+                        <Input
+                          type="number"
+                          value={adjustments[status.id] || ''}
+                          onChange={(e) => handleAdjustmentChange(status.id, e.target.value)}
+                          className="w-24"
+                          min="-9999"
+                          step="0.01"
+                        />
+                      </TableCell>
+                      <TableCell>{status.closing_balance.toFixed(2)} {status.raw_material_unit}</TableCell>
+                      <TableCell>{status.min_level.toFixed(2)} {status.raw_material_unit}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+
+        <div className="flex justify-end mt-4">
+          <Button
+            onClick={handleUpdateStatus}
+            disabled={loading}
+            className="ml-auto"
+          >
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Update Status
+          </Button>
         </div>
       </div>
     </Layout>
