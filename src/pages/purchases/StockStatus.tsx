@@ -137,8 +137,8 @@ const StockStatusPage = () => {
           console.error("Error fetching existing stock status:", existingError);
         }
 
-        // Reset opening balance to zero
-        const opening_balance = 0;
+        // Use existing opening balance or reset to zero if not found
+        const opening_balance = existingData?.opening_balance || 0;
 
         // Calculate the total purchases for this material in the current month
         const totalPurchases = stockPurchases
