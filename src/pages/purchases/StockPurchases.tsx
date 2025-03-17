@@ -23,7 +23,7 @@ import { Label } from '@/components/ui/label';
 import { Edit, Trash, Plus, Search, Download, Upload } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { supabase } from '@/integrations/supabase/client';
-import StockStatusPage from '@/pages/purchase/StockStatus';
+import StockStatusPage from './StockStatus'; // Corrected import statement
 
 // Types
 interface Vendor {
