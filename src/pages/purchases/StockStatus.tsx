@@ -153,7 +153,7 @@ const StockStatusPage = () => {
         const utilizedQuantity = 0; // Placeholder for utilized quantity logic
 
         // Calculate the closing balance
-        const closing_balance = opening_balance + totalPurchases - utilizedQuantity + (existingData?.adjustment || 0);
+        const closing_balance = opening_balance + totalPurchases - utilizedQuantity + (adjustments[comboId] || 0);
 
         stockStatusItems.push({
           id: existingData?.id || comboId, // Use existing ID if available, otherwise use comboId
@@ -166,7 +166,7 @@ const StockStatusPage = () => {
           opening_balance,
           purchases: totalPurchases,
           utilized: utilizedQuantity,
-          adjustment: existingData?.adjustment || 0,
+          adjustment: adjustments[comboId] || 0,
           closing_balance,
           min_level: material.min_stock,
         });
