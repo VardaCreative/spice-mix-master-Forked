@@ -177,7 +177,7 @@ const StockStatusPage = () => {
         const closing_balance = opening_balance + totalPurchases - utilizedQuantity + (existingData?.adjustment || 0);
 
         stockStatusItems.push({
-          id: comboId,
+          id: existingData?.id || comboId, // Use existing ID if available, otherwise use comboId
           month,
           year,
           raw_material_id: material.id,
@@ -226,11 +226,18 @@ const StockStatusPage = () => {
 
         const { error } = await supabase
           .from('stock_status')
-          .update({
+          .upsert({
+            id: status.id, // Ensure the ID is correctly used for upsert
+            month: status.month,
+            year: status.year,
+            raw_material_id: status.raw_material_id,
+            opening_balance: status.opening_balance,
+            purchases: status.purchases,
+            utilized: status.utilized,
             adjustment: newAdjustment,
             closing_balance: newClosingBalance,
-          })
-          .eq('id', status.id);
+            min_level: status.min_level
+          });
 
         if (error) throw error;
       }
