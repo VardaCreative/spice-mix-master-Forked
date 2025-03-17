@@ -214,9 +214,9 @@ const StockStatusPage = () => {
 
       for (const status of stockStatus) {
         const newAdjustment = adjustments[status.id] || 0;
-        const newOpeningBalance = parseFloat(openingBalances[status.id] || status.opening_balance);
-        const newPurchases = parseFloat(status.purchases);
-        const newUtilized = parseFloat(status.utilized);
+        const newOpeningBalance = parseFloat(openingBalances[status.id] || status.opening_balance.toString());
+        const newPurchases = parseFloat(status.purchases.toString());
+        const newUtilized = parseFloat(status.utilized.toString());
         const newClosingBalance = newOpeningBalance + newPurchases - newUtilized + newAdjustment;
 
         const { error } = await supabase
@@ -326,7 +326,7 @@ const StockStatusPage = () => {
                       <TableCell>
                         <Input
                           type="number"
-                          value={openingBalances[status.id] || status.opening_balance.toString()}
+                          value={openingBalances[status.id] !== undefined ? openingBalances[status.id].toString() : status.opening_balance.toString()}
                           onChange={(e) => handleOpeningBalanceChange(status.id, e.target.value)}
                           className="w-24"
                           min="0"
@@ -338,14 +338,14 @@ const StockStatusPage = () => {
                       <TableCell>
                         <Input
                           type="number"
-                          value={adjustments[status.id] || ''}
+                          value={adjustments[status.id] !== undefined ? adjustments[status.id].toString() : ""}
                           onChange={(e) => handleAdjustmentChange(status.id, e.target.value)}
                           className="w-24"
                           min="-9999"
                           step="0.01"
                         />
                       </TableCell>
-                      <TableCell>{(parseFloat(openingBalances[status.id] || status.opening_balance) + parseFloat(status.purchases) - parseFloat(status.utilized) + parseFloat(adjustments[status.id] || 0)).toFixed(2)} {status.raw_material_unit}</TableCell>
+                      <TableCell>{(parseFloat(openingBalances[status.id] !== undefined ? openingBalances[status.id].toString() : status.opening_balance.toString()) + status.purchases - status.utilized + parseFloat(adjustments[status.id] !== undefined ? adjustments[status.id].toString() : "0")).toFixed(2)} {status.raw_material_unit}</TableCell>
                       <TableCell>{status.min_level.toFixed(2)} {status.raw_material_unit}</TableCell>
                     </TableRow>
                   ))
