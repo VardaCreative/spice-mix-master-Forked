@@ -330,7 +330,7 @@ const StockStatusPage = () => {
                           step="0.01"
                         />
                       </TableCell>
-                      <TableCell>{status.purchases.toFixed(2)} {status.raw_material_unit}</TableHead>
+                      <TableCell>{status.purchases.toFixed(2)} {status.raw_material_unit}</TableCell>
                       <TableCell>{status.utilized.toFixed(2)} {status.raw_material_unit}</TableCell>
                       <TableCell>
                         <Input
