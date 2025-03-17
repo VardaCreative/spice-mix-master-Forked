@@ -207,53 +207,12 @@ const StockStatusPage = () => {
     }));
   };
 
-  // Update stock status with new adjustments and opening balances
-  const handleUpdateStatus = async () => {
-    try {
-      setLoading(true);
-
-      for (const status of stockStatus) {
-        const newAdjustment = adjustments[status.id] || 0;
-        const newOpeningBalance = parseFloat(openingBalances[status.id] || status.opening_balance.toString());
-        const newPurchases = parseFloat(status.purchases.toString());
-        const newUtilized = parseFloat(status.utilized.toString());
-        const newClosingBalance = newOpeningBalance + newPurchases - newUtilized + newAdjustment;
-
-        const { error } = await supabase
-          .from('stock_status')
-          .upsert({
-            id: status.id, // Ensure the ID is correctly used for upsert
-            month: status.month,
-            year: status.year,
-            raw_material_id: status.raw_material_id,
-            opening_balance: newOpeningBalance,
-            purchases: newPurchases,
-            utilized: newUtilized,
-            adjustment: newAdjustment,
-            closing_balance: newClosingBalance,
-            min_level: status.min_level
-          });
-
-        if (error) throw error;
-      }
-
-      toast({
-        title: "Stock status updated",
-        description: "Stock status has been updated successfully with new adjustments and opening balances.",
-      });
-
-      // Refresh data
-      fetchStockStatus();
-    } catch (error: any) {
-      toast({
-        title: "Error updating stock status",
-        description: error.message,
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Calculate the closing balance for display
+  const calculateClosingBalance = (id: string, purchases: number, utilized: number, unit: string) => {
+    const openingBalance = parseFloat(openingBalances[id]?.toString() || "0");
+    const adjustment = parseFloat(adjustments[id]?.toString() || "0");
+    return (openingBalance + purchases - utilized + adjustment).toFixed(2) + " " + unit;
+  }
 
   // Filter stock status based on search query
   const filteredStockStatus = stockStatus.filter(status =>
@@ -345,7 +304,7 @@ const StockStatusPage = () => {
                           step="0.01"
                         />
                       </TableCell>
-                      <TableCell>{(parseFloat(openingBalances[status.id] !== undefined ? openingBalances[status.id].toString() : status.opening_balance.toString()) + status.purchases - status.utilized + parseFloat(adjustments[status.id] !== undefined ? adjustments[status.id].toString() : "0")).toFixed(2)} {status.raw_material_unit}</TableCell>
+                      <TableCell>{calculateClosingBalance(status.id, status.purchases, status.utilized, status.raw_material_unit)}</TableCell>
                       <TableCell>{status.min_level.toFixed(2)} {status.raw_material_unit}</TableCell>
                     </TableRow>
                   ))
