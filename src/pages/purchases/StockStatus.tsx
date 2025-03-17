@@ -214,8 +214,10 @@ const StockStatusPage = () => {
 
       for (const status of stockStatus) {
         const newAdjustment = adjustments[status.id] || 0;
-        const newOpeningBalance = openingBalances[status.id] || status.opening_balance;
-        const newClosingBalance = newOpeningBalance + status.purchases - status.utilized + newAdjustment;
+        const newOpeningBalance = parseFloat(openingBalances[status.id] || status.opening_balance);
+        const newPurchases = parseFloat(status.purchases);
+        const newUtilized = parseFloat(status.utilized);
+        const newClosingBalance = newOpeningBalance + newPurchases - newUtilized + newAdjustment;
 
         const { error } = await supabase
           .from('stock_status')
@@ -225,8 +227,8 @@ const StockStatusPage = () => {
             year: status.year,
             raw_material_id: status.raw_material_id,
             opening_balance: newOpeningBalance,
-            purchases: status.purchases,
-            utilized: status.utilized,
+            purchases: newPurchases,
+            utilized: newUtilized,
             adjustment: newAdjustment,
             closing_balance: newClosingBalance,
             min_level: status.min_level
@@ -343,7 +345,7 @@ const StockStatusPage = () => {
                           step="0.01"
                         />
                       </TableCell>
-                      <TableCell>{(openingBalances[status.id] || status.opening_balance) + status.purchases - status.utilized + (adjustments[status.id] || 0).toFixed(2)} {status.raw_material_unit}</TableCell>
+                      <TableCell>{(parseFloat(openingBalances[status.id] || status.opening_balance) + parseFloat(status.purchases) - parseFloat(status.utilized) + parseFloat(adjustments[status.id] || 0)).toFixed(2)} {status.raw_material_unit}</TableCell>
                       <TableCell>{status.min_level.toFixed(2)} {status.raw_material_unit}</TableCell>
                     </TableRow>
                   ))
