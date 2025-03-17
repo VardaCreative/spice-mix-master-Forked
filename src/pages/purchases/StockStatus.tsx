@@ -11,13 +11,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
-} from '@/components/ui/select';
 import { Card, CardContent } from '@/components/ui/card';
 import { RefreshCw, Search } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
@@ -144,24 +137,8 @@ const StockStatusPage = () => {
           console.error("Error fetching existing stock status:", existingError);
         }
 
-        // Get previous month's closing balance
-        const prevMonth = new Date(year, new Date(`${month} 1, ${year}`).getMonth() - 1, 1);
-        const prevMonthString = prevMonth.toLocaleString('default', { month: 'short' });
-        const prevYear = prevMonth.getFullYear();
-        
-        const { data: prevData, error: prevError } = await supabase
-          .from('stock_status')
-          .select('closing_balance')
-          .eq('month', prevMonthString)
-          .eq('year', prevYear)
-          .eq('raw_material_id', material.id)
-          .maybeSingle();
-        
-        if (prevError) {
-          console.error("Error fetching previous stock status:", prevError);
-        }
-
-        const opening_balance = existingData ? existingData.opening_balance : (prevData ? prevData.closing_balance : 0);
+        // Reset opening balance to zero
+        const opening_balance = 0;
 
         // Calculate the total purchases for this material in the current month
         const totalPurchases = stockPurchases
