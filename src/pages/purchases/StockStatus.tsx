@@ -63,6 +63,7 @@ const StockStatusPage = () => {
   const [loading, setLoading] = useState(true);
   const [statusDate, setStatusDate] = useState(new Date().toISOString().split('T')[0]);
   const [adjustments, setAdjustments] = useState<Record<string, number>>({});
+  const [openingBalances, setOpeningBalances] = useState<Record<string, number>>({});
   const { toast } = useToast();
 
   // Parse date to get month and year
@@ -124,6 +125,7 @@ const StockStatusPage = () => {
       // Create or update stock status for each raw material
       const stockStatusItems: StockStatus[] = [];
       const newAdjustments: Record<string, number> = {};
+      const newOpeningBalances: Record<string, number> = {};
 
       for (const material of rawMaterials) {
         // Generate a unique ID for this combination
@@ -159,7 +161,7 @@ const StockStatusPage = () => {
           console.error("Error fetching previous stock status:", prevError);
         }
 
-        const opening_balance = prevData ? prevData.closing_balance : 0;
+        const opening_balance = existingData ? existingData.opening_balance : (prevData ? prevData.closing_balance : 0);
 
         // Calculate the total purchases for this material in the current month
         const totalPurchases = stockPurchases
@@ -191,10 +193,13 @@ const StockStatusPage = () => {
           closing_balance,
           min_level: material.min_stock,
         });
+
+        newOpeningBalances[comboId] = opening_balance;
       }
 
       setStockStatus(stockStatusItems);
       setAdjustments(newAdjustments);
+      setOpeningBalances(newOpeningBalances);
     } catch (error: any) {
       toast({
         title: "Error fetching stock status",
@@ -215,14 +220,24 @@ const StockStatusPage = () => {
     }));
   };
 
-  // Update stock status with new adjustments
+  // Handle opening balance change
+  const handleOpeningBalanceChange = (id: string, value: string) => {
+    const numValue = parseFloat(value) || 0;
+    setOpeningBalances(prev => ({
+      ...prev,
+      [id]: numValue
+    }));
+  };
+
+  // Update stock status with new adjustments and opening balances
   const handleUpdateStatus = async () => {
     try {
       setLoading(true);
 
       for (const status of stockStatus) {
         const newAdjustment = adjustments[status.id] || 0;
-        const newClosingBalance = status.closing_balance + newAdjustment;
+        const newOpeningBalance = openingBalances[status.id] || status.opening_balance;
+        const newClosingBalance = newOpeningBalance + status.purchases - status.utilized + newAdjustment;
 
         const { error } = await supabase
           .from('stock_status')
@@ -231,7 +246,7 @@ const StockStatusPage = () => {
             month: status.month,
             year: status.year,
             raw_material_id: status.raw_material_id,
-            opening_balance: status.opening_balance,
+            opening_balance: newOpeningBalance,
             purchases: status.purchases,
             utilized: status.utilized,
             adjustment: newAdjustment,
@@ -244,7 +259,7 @@ const StockStatusPage = () => {
 
       toast({
         title: "Stock status updated",
-        description: "Stock status has been updated successfully with new adjustments.",
+        description: "Stock status has been updated successfully with new adjustments and opening balances.",
       });
 
       // Refresh data
@@ -328,7 +343,16 @@ const StockStatusPage = () => {
                     <TableRow key={status.id}>
                       <TableCell>{status.raw_material_name}</TableCell>
                       <TableCell>{status.raw_material_category}</TableCell>
-                      <TableCell>{status.opening_balance.toFixed(2)} {status.raw_material_unit}</TableCell>
+                      <TableCell>
+                        <Input
+                          type="number"
+                          value={openingBalances[status.id] || status.opening_balance.toString()}
+                          onChange={(e) => handleOpeningBalanceChange(status.id, e.target.value)}
+                          className="w-24"
+                          min="0"
+                          step="0.01"
+                        />
+                      </TableCell>
                       <TableCell>{status.purchases.toFixed(2)} {status.raw_material_unit}</TableCell>
                       <TableCell>{status.utilized.toFixed(2)} {status.raw_material_unit}</TableCell>
                       <TableCell>
