@@ -494,4 +494,3 @@ const StockStatusPage = () => {
                         <TableCell>
                           <Input
                             type="number"
-                            value={adjustments
