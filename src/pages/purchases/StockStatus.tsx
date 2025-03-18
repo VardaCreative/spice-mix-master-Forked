@@ -492,6 +492,4 @@ const StockStatusPage = () => {
                         <TableCell>{status.purchases} {status.raw_material_unit}</TableCell>
                         <TableCell>{status.utilized} {status.raw_material_unit}</TableCell>
                         <TableCell>
-                          <Input
-                            type="number"
-                            value={adjustments[status.id
+                         
