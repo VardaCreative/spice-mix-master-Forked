@@ -44,76 +44,22 @@ interface StockStatus {
 
 const StockStatusPage = () => {
   const [stockStatus, setStockStatus] = useState<StockStatus[]>([]);
-  const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
-  const [statusDate, setStatusDate] = useState(new Date().toISOString().split('T')[0]);
-  const [adjustments, setAdjustments] = useState<Record<string, number>>({});
   const { toast } = useToast();
 
-  // Fetch data on component mount
   useEffect(() => {
-    fetchRawMaterials();
+    fetchStockStatus();
   }, []);
 
-  useEffect(() => {
-    if (rawMaterials.length > 0) {
-      fetchStockStatus();
-    }
-  }, [rawMaterials, statusDate]);
-
-  // Fetch all raw materials
-  const fetchRawMaterials = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('raw_materials')
-        .select('*')
-        .order('name');
-
-      if (error) {
-        throw error;
-      }
-      setRawMaterials(data || []);
-    } catch (error: any) {
-      toast({
-        title: "Error fetching raw materials",
-        description: error.message,
-        variant: "destructive",
-      });
-    }
-  };
-
-  // Fetch stock status based on date
   const fetchStockStatus = async () => {
     try {
       setLoading(true);
       const { data, error } = await supabase
         .from('stock_status')
-        .select(`*, raw_materials(name, category, unit, min_stock) `)
-        .eq('month', new Date(statusDate).toLocaleString('default', { month: 'short' }))
-        .eq('year', new Date(statusDate).getFullYear());
-
-      if (error) {
-        throw error;
-      }
-
-      const transformedData = data.map((status: any) => {
-        const rawMaterial = status.raw_materials;
-        return {
-          ...status,
-          raw_material_name: rawMaterial?.name || 'Unknown',
-          raw_material_category: rawMaterial?.category || 'Unknown',
-          raw_material_unit: rawMaterial?.unit || 'unit',
-          min_level: rawMaterial?.min_stock || 0,
-          status: determineStatus(status.closing_balance, rawMaterial?.min_stock || 0),
-        };
-      });
-
-      setStockStatus(transformedData);
-      setAdjustments(transformedData.reduce((acc, status) => {
-        acc[status.id] = status.adjustment;
-        return acc;
-      }, {} as Record<string, number>));
+        .select('*');
+      
+      if (error) throw error;
+      setStockStatus(data || []);
     } catch (error: any) {
       toast({
         title: "Error fetching stock status",
@@ -125,17 +71,14 @@ const StockStatusPage = () => {
     }
   };
 
-  // Determine status based on closing balance and min stock
-  const determineStatus = (closing: number, min: number): 'normal' | 'low' | 'out' => {
-    if (closing <= 0) return 'out';
-    if (closing < min) return 'low';
-    return 'normal';
-  };
-
   return (
     <Layout>
       <div className="space-y-6">
         <h1 className="text-3xl font-bold">Stock Status</h1>
+        <Button onClick={fetchStockStatus} disabled={loading}>
+          <RefreshCw className="mr-2 h-4 w-4" />
+          Refresh
+        </Button>
         <Table>
           <TableHeader>
             <TableRow>
@@ -143,37 +86,37 @@ const StockStatusPage = () => {
               <TableHead>Category</TableHead>
               <TableHead>Opening Balance</TableHead>
               <TableHead>Purchases</TableHead>
-              <TableHead>Utilized</TableHead>
-              <TableHead>Adjustment</TableHead>
-              <TableHead>Closing Balance</TableHead>
+              <TableHead>Utilised</TableHead>
+              <TableHead>Adj +/-</TableHead>
+              <TableHead>Closing Bal</TableHead>
               <TableHead>Min. Level</TableHead>
               <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {stockStatus.map(status => (
-              <TableRow key={status.id}>
-                <TableCell>{status.raw_material_name}</TableCell>
-                <TableCell>{status.raw_material_category}</TableCell>
-                <TableCell>{status.opening_balance}</TableCell>
-                <TableCell>{status.purchases}</TableCell>
-                <TableCell>{status.utilized}</TableCell>
-                <TableCell>
-                  <Input
-                    type="number"
-                    value={adjustments[status.id] || 0}
-                    onChange={(e) => setAdjustments({
-                      ...adjustments,
-                      [status.id]: parseFloat(e.target.value) || 0
-                    })}
-                    className="w-16 text-center"
-                  />
-                </TableCell>
-                <TableCell>{status.opening_balance + status.purchases - status.utilized + (adjustments[status.id] || 0)}</TableCell>
-                <TableCell>{status.min_level}</TableCell>
-                <TableCell>{status.status}</TableCell>
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={9} className="text-center py-10">Loading...</TableCell>
               </TableRow>
-            ))}
+            ) : stockStatus.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={9} className="text-center py-10">No data available.</TableCell>
+              </TableRow>
+            ) : (
+              stockStatus.map((status) => (
+                <TableRow key={status.id}>
+                  <TableCell>{status.raw_material_name}</TableCell>
+                  <TableCell>{status.raw_material_category}</TableCell>
+                  <TableCell>{status.opening_balance}</TableCell>
+                  <TableCell>{status.purchases}</TableCell>
+                  <TableCell>{status.utilized}</TableCell>
+                  <TableCell>{status.adjustment}</TableCell>
+                  <TableCell>{status.closing_balance}</TableCell>
+                  <TableCell>{status.min_level}</TableCell>
+                  <TableCell>{status.status}</TableCell>
+                </TableRow>
+              ))
+            )}
           </TableBody>
         </Table>
       </div>
