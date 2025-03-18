@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import Layout from '@/components/Layout';
 import { 
@@ -50,6 +49,7 @@ const StockStatusPage = () => {
   const [loading, setLoading] = useState(true);
   const [statusDate, setStatusDate] = useState(new Date().toISOString().split('T')[0]);
   const [adjustments, setAdjustments] = useState<Record<string, number>>({});
+  const [openingBalances, setOpeningBalances] = useState<Record<string, number>>({});
   const { toast } = useToast();
 
   // Parse date to get month and year
@@ -126,12 +126,15 @@ const StockStatusPage = () => {
 
         setStockStatus(transformedData);
         
-        // Initialize adjustments
+        // Initialize adjustments and opening balances
         const newAdjustments: Record<string, number> = {};
+        const newOpeningBalances: Record<string, number> = {};
         transformedData.forEach((status) => {
           newAdjustments[status.id] = status.adjustment;
+          newOpeningBalances[status.id] = status.opening_balance;
         });
         setAdjustments(newAdjustments);
+        setOpeningBalances(newOpeningBalances);
       } else {
         // No records for this month/year, we need to create them
         await generateStockStatus(currentMonth, currentYear);
@@ -157,6 +160,7 @@ const StockStatusPage = () => {
       // 4. Calculate closing balance = opening + purchases - utilized + adjustment
       const newStockStatus: StockStatus[] = [];
       const newAdjustments: Record<string, number> = {};
+      const newOpeningBalances: Record<string, number> = {};
 
       for (const material of rawMaterials) {
         // Find previous month's record (for Opening Balance)
@@ -236,6 +240,7 @@ const StockStatusPage = () => {
 
         newStockStatus.push(newStatus);
         newAdjustments[`temp_${material.id}`] = 0;
+        newOpeningBalances[`temp_${material.id}`] = openingBalance;
 
         // Insert into database
         const { data: insertedData, error: insertError } = await supabase
@@ -259,12 +264,15 @@ const StockStatusPage = () => {
           // Update id in memory
           newStatus.id = insertedData[0].id;
           newAdjustments[insertedData[0].id] = 0;
+          newOpeningBalances[insertedData[0].id] = openingBalance;
           delete newAdjustments[`temp_${material.id}`];
+          delete newOpeningBalances[`temp_${material.id}`];
         }
       }
 
       setStockStatus(newStockStatus);
       setAdjustments(newAdjustments);
+      setOpeningBalances(newOpeningBalances);
     } catch (error: any) {
       toast({
         title: "Error generating stock status",
@@ -290,21 +298,32 @@ const StockStatusPage = () => {
     }));
   };
 
-  // Update stock status with new adjustments
+  // Handle opening balance change
+  const handleOpeningBalanceChange = (id: string, value: string) => {
+    const numValue = parseFloat(value) || 0;
+    setOpeningBalances(prev => ({
+      ...prev,
+      [id]: numValue
+    }));
+  };
+
+  // Update stock status with new adjustments and opening balances
   const handleUpdateStatus = async () => {
     try {
       setLoading(true);
 
-      // Update each stock status with new adjustment
+      // Update each stock status with new adjustment and opening balance
       for (const status of stockStatus) {
         const newAdjustment = adjustments[status.id] || 0;
-        const newClosingBalance = status.opening_balance + status.purchases - status.utilized + newAdjustment;
+        const newOpeningBalance = openingBalances[status.id] || status.opening_balance;
+        const newClosingBalance = newOpeningBalance + status.purchases - status.utilized + newAdjustment;
         const newStatus = determineStatus(newClosingBalance, status.min_level);
 
         // Update in database
         const { error } = await supabase
           .from('stock_status')
           .update({
+            opening_balance: newOpeningBalance,
             adjustment: newAdjustment,
             closing_balance: newClosingBalance,
             status: newStatus
@@ -450,51 +469,29 @@ const StockStatusPage = () => {
                     status.raw_material_category?.toLowerCase().includes(searchQuery.toLowerCase())
                   )
                   .map(status => {
-                    // Calculate real-time closing balance based on current adjustment
+                    // Calculate real-time closing balance based on current adjustment and opening balance
                     const currentAdjustment = adjustments[status.id] || 0;
-                    const calculatedClosingBalance = status.opening_balance + status.purchases - status.utilized + currentAdjustment;
+                    const currentOpeningBalance = openingBalances[status.id] || status.opening_balance;
+                    const calculatedClosingBalance = currentOpeningBalance + status.purchases - status.utilized + currentAdjustment;
                     const calculatedStatus = determineStatus(calculatedClosingBalance, status.min_level);
                     
                     return (
                       <TableRow key={status.id}>
                         <TableCell className="font-medium">{status.raw_material_name}</TableCell>
                         <TableCell>{status.raw_material_category}</TableCell>
-                        <TableCell>{status.opening_balance} {status.raw_material_unit}</TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            value={openingBalances[status.id] || 0}
+                            onChange={(e) => handleOpeningBalanceChange(status.id, e.target.value)}
+                            className="w-16 text-center"
+                            min="0"
+                            step="0.01"
+                          />
+                        </TableCell>
                         <TableCell>{status.purchases} {status.raw_material_unit}</TableCell>
                         <TableCell>{status.utilized} {status.raw_material_unit}</TableCell>
                         <TableCell>
                           <Input
                             type="number"
-                            value={adjustments[status.id] || 0}
-                            onChange={(e) => handleAdjustmentChange(status.id, e.target.value)}
-                            className="w-16 text-center"
-                            min="-9999"
-                            step="0.01"
-                          />
-                        </TableCell>
-                        <TableCell>{calculatedClosingBalance.toFixed(2)} {status.raw_material_unit}</TableCell>
-                        <TableCell>{status.min_level} {status.raw_material_unit}</TableCell>
-                        <TableCell>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                            calculatedStatus === 'normal' ? 'bg-green-100 text-green-800' :
-                            calculatedStatus === 'low' ? 'bg-amber-100 text-amber-800' :
-                            'bg-red-100 text-red-800'
-                          }`}>
-                            {calculatedStatus === 'normal' ? 'Normal' : 
-                            calculatedStatus === 'low' ? 'Low Stock' : 
-                            'Out of Stock'}
-                          </span>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      </div>
-    </Layout>
-  );
-};
-
-export default StockStatusPage;
+                            value={adjustments[status.id
