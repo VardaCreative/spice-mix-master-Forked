@@ -15,112 +15,167 @@ import { RefreshCw, Search } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 
+// Types
+interface RawMaterial {
+  id: string;
+  name: string;
+  category: string;
+  min_stock: number;
+  unit: string;
+  current_stock: number;
+}
+
+interface StockStatus {
+  id: string;
+  month: string;
+  year: number;
+  raw_material_id: string;
+  raw_material_name?: string;
+  raw_material_category?: string;
+  raw_material_unit?: string;
+  opening_balance: number;
+  purchases: number;
+  utilized: number;
+  adjustment: number;
+  closing_balance: number;
+  min_level: number;
+  status: 'normal' | 'low' | 'out';
+}
+
 const StockStatusPage = () => {
-  const [stockStatus, setStockStatus] = useState([]);
+  const [stockStatus, setStockStatus] = useState<StockStatus[]>([]);
+  const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [statusDate, setStatusDate] = useState(new Date().toISOString().split('T')[0]);
-  const [adjustments, setAdjustments] = useState({});
+  const [adjustments, setAdjustments] = useState<Record<string, number>>({});
   const { toast } = useToast();
 
+  // Fetch data on component mount
+  useEffect(() => {
+    fetchRawMaterials();
+  }, []);
+
+  useEffect(() => {
+    if (rawMaterials.length > 0) {
+      fetchStockStatus();
+    }
+  }, [rawMaterials, statusDate]);
+
+  // Fetch all raw materials
+  const fetchRawMaterials = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('raw_materials')
+        .select('*')
+        .order('name');
+
+      if (error) {
+        throw error;
+      }
+      setRawMaterials(data || []);
+    } catch (error: any) {
+      toast({
+        title: "Error fetching raw materials",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Fetch stock status based on date
   const fetchStockStatus = async () => {
     try {
       setLoading(true);
       const { data, error } = await supabase
         .from('stock_status')
-        .select('*');
+        .select(`*, raw_materials(name, category, unit, min_stock) `)
+        .eq('month', new Date(statusDate).toLocaleString('default', { month: 'short' }))
+        .eq('year', new Date(statusDate).getFullYear());
 
-      if (error) throw error;
-
-      const updatedData = data.map(item => ({
-        ...item,
-        closing_balance: item.opening_balance + item.purchases - item.utilized + (adjustments[item.id] || 0),
-      }));
-      setStockStatus(updatedData);
-    } catch (error) {
-      toast({ title: 'Error fetching stock status', description: error.message, variant: 'destructive' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchStockStatus();
-  }, []);
-
-  const handleAdjustmentChange = (id, value) => {
-    setAdjustments(prev => ({ ...prev, [id]: parseFloat(value) || 0 }));
-  };
-
-  const handleUpdateStatus = async () => {
-    try {
-      setLoading(true);
-      for (const status of stockStatus) {
-        const newAdjustment = adjustments[status.id] || 0;
-        const newClosingBalance = status.opening_balance + status.purchases - status.utilized + newAdjustment;
-        await supabase
-          .from('stock_status')
-          .update({ adjustment: newAdjustment, closing_balance: newClosingBalance })
-          .eq('id', status.id);
+      if (error) {
+        throw error;
       }
-      toast({ title: 'Stock status updated', description: 'Stock status successfully updated.' });
-      fetchStockStatus();
-    } catch (error) {
-      toast({ title: 'Error updating stock status', description: error.message, variant: 'destructive' });
+
+      const transformedData = data.map((status: any) => {
+        const rawMaterial = status.raw_materials;
+        return {
+          ...status,
+          raw_material_name: rawMaterial?.name || 'Unknown',
+          raw_material_category: rawMaterial?.category || 'Unknown',
+          raw_material_unit: rawMaterial?.unit || 'unit',
+          min_level: rawMaterial?.min_stock || 0,
+          status: determineStatus(status.closing_balance, rawMaterial?.min_stock || 0),
+        };
+      });
+
+      setStockStatus(transformedData);
+      setAdjustments(transformedData.reduce((acc, status) => {
+        acc[status.id] = status.adjustment;
+        return acc;
+      }, {} as Record<string, number>));
+    } catch (error: any) {
+      toast({
+        title: "Error fetching stock status",
+        description: error.message,
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
+  };
+
+  // Determine status based on closing balance and min stock
+  const determineStatus = (closing: number, min: number): 'normal' | 'low' | 'out' => {
+    if (closing <= 0) return 'out';
+    if (closing < min) return 'low';
+    return 'normal';
   };
 
   return (
     <Layout>
       <div className="space-y-6">
         <h1 className="text-3xl font-bold">Stock Status</h1>
-        <div className="bg-white p-4 rounded-lg shadow-sm">
-          <div className="flex flex-wrap gap-4 items-end">
-            <Label>Status Date</Label>
-            <Input type="date" value={statusDate} onChange={(e) => setStatusDate(e.target.value)} className="w-40" />
-            <Button onClick={handleUpdateStatus} disabled={loading}><RefreshCw className="mr-2 h-4 w-4" />Update Status</Button>
-          </div>
-        </div>
-        <div className="bg-white rounded-lg shadow">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Stock Name</TableHead>
-                <TableHead>Opening Balance</TableHead>
-                <TableHead>Purchases</TableHead>
-                <TableHead>Utilized</TableHead>
-                <TableHead>Adj +/-</TableHead>
-                <TableHead>Closing Bal</TableHead>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Stock Name</TableHead>
+              <TableHead>Category</TableHead>
+              <TableHead>Opening Balance</TableHead>
+              <TableHead>Purchases</TableHead>
+              <TableHead>Utilized</TableHead>
+              <TableHead>Adjustment</TableHead>
+              <TableHead>Closing Balance</TableHead>
+              <TableHead>Min. Level</TableHead>
+              <TableHead>Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {stockStatus.map(status => (
+              <TableRow key={status.id}>
+                <TableCell>{status.raw_material_name}</TableCell>
+                <TableCell>{status.raw_material_category}</TableCell>
+                <TableCell>{status.opening_balance}</TableCell>
+                <TableCell>{status.purchases}</TableCell>
+                <TableCell>{status.utilized}</TableCell>
+                <TableCell>
+                  <Input
+                    type="number"
+                    value={adjustments[status.id] || 0}
+                    onChange={(e) => setAdjustments({
+                      ...adjustments,
+                      [status.id]: parseFloat(e.target.value) || 0
+                    })}
+                    className="w-16 text-center"
+                  />
+                </TableCell>
+                <TableCell>{status.opening_balance + status.purchases - status.utilized + (adjustments[status.id] || 0)}</TableCell>
+                <TableCell>{status.min_level}</TableCell>
+                <TableCell>{status.status}</TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center py-10">Loading...</TableCell>
-                </TableRow>
-              ) : (
-                stockStatus.map(status => (
-                  <TableRow key={status.id}>
-                    <TableCell>{status.raw_material_name}</TableCell>
-                    <TableCell>{status.opening_balance}</TableCell>
-                    <TableCell>{status.purchases}</TableCell>
-                    <TableCell>{status.utilized}</TableCell>
-                    <TableCell>
-                      <Input
-                        type="number"
-                        value={adjustments[status.id] || 0}
-                        onChange={(e) => handleAdjustmentChange(status.id, e.target.value)}
-                      />
-                    </TableCell>
-                    <TableCell>{status.closing_balance}</TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
+            ))}
+          </TableBody>
+        </Table>
       </div>
     </Layout>
   );
